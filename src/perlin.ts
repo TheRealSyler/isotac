@@ -1,96 +1,123 @@
-// from https://en.wikipedia.org/wiki/Perlin_noise
+export interface PerlinSettings {
+  frequency: number,
+  frequencyMultiplier: number,
+  amplitudeMultiplier: number,
+  octaves: number,
+  interpolate: (a0: number, a1: number, w: number) => number
+  /** should return number between 0 and 1 */
+  randomNumber: (x: number, y: number) => number
+}
 
-class Vector2 {
-  constructor(public x = 0, public y = 0) { }
-  dot(v: Vector2) {
-
-    return this.x * v.x + this.y * v.y;
-
+/** Adapted from https://en.wikipedia.org/wiki/Perlin_noise */
+export class Perlin {
+  private settings: PerlinSettings = {
+    frequency: 0.02,
+    octaves: 4,
+    frequencyMultiplier: 2,
+    amplitudeMultiplier: 0.5,
+    interpolate: interpolateSmootherstep,
+    randomNumber: (x, y) => sfc32(...cyrb128(`${x}-${y}`)),
+  }
+  constructor(settings?: Partial<PerlinSettings>) {
+    settings && this.setSettings(settings)
   }
 
-  distanceVec2(v: Vector2) {
-    return new Vector2(this.x - v.x, this.y - v.y)
+  setSettings(settings: Partial<PerlinSettings>) {
+    this.settings = { ...this.settings, ...settings }
+  }
+
+  /** return range -1 to 1 */
+  get(x: number, y: number) {
+    let res = 0
+
+    let frequency = this.settings.frequency
+    let amplitude = 1
+    let divider = 0
+    for (let o = 0; o < this.settings.octaves; o++) {
+
+      res += this.perlin(x * frequency, y * frequency) * amplitude
+
+      divider += amplitude
+      frequency *= this.settings.frequencyMultiplier
+      amplitude *= this.settings.amplitudeMultiplier
+    }
+
+    return res / divider
+  }
+
+  /** return range -1 to 1 */
+  private perlin(x: number, y: number) {
+    const x0 = Math.floor(x);
+    const x1 = x0 + 1;
+    const y0 = Math.floor(y);
+    const y1 = y0 + 1;
+
+    // TODO add order polynomial/s-curve ??
+    // Determine interpolation weights
+    // Could also use higher order polynomial/s-curve here
+    const sx = x - x0;
+    const sy = y - y0;
+
+    let n0, n1;
+
+    n0 = this.dotGridGradient(x0, y0, x, y);
+    n1 = this.dotGridGradient(x1, y0, x, y);
+    const ix0 = this.settings.interpolate(n0, n1, sx);
+
+    n0 = this.dotGridGradient(x0, y1, x, y);
+    n1 = this.dotGridGradient(x1, y1, x, y);
+    const ix1 = this.settings.interpolate(n0, n1, sx);
+
+    return this.settings.interpolate(ix0, ix1, sy);
+
+  }
+  dotGridGradient(ix: number, iy: number, x: number, y: number) {
+    const random = this.settings.randomNumber(ix, iy) * Math.PI * 2;
+    return (x - ix) * Math.cos(random) + (y - iy) * Math.sin(random);
   }
 }
 
-function randomVector(a: number) {
-  const theta = mulberry32(a) * 2 * Math.PI;
-  return new Vector2(Math.cos(theta), Math.sin(theta))
+export const interpolateLinear: PerlinSettings['interpolate'] = (a0, a1, w) => {
+  return (a1 - a0) * w + a0;
 }
 
-
-export default function perlin(width: number, height: number) {
-  const size = width * height
-
-  const grid = Array.from({ length: size }).map((_, i) => randomVector(i))
-
-
-  return (x: number, y: number) => {
-    const xFloor = Math.floor(x)
-    const yFloor = Math.floor(y)
-
-    const vector = new Vector2(x / width, y / height)
-
-    const leftUpCornerIndex = getIndex(xFloor, yFloor, width, height);
-    const leftDownCornerIndex = getIndex(xFloor, yFloor + 1, width, height);
-    const rightUpCornerIndex = getIndex(xFloor + 1, yFloor, width, height);
-    const rightDownCornerIndex = getIndex(xFloor + 1, yFloor + 1, width, height);
-
-    const leftUpCornerOffset = vector.distanceVec2(grid[leftUpCornerIndex]);
-    const leftDownCornerOffset = vector.distanceVec2(grid[leftDownCornerIndex]);
-    const rightUpCornerOffset = vector.distanceVec2(grid[rightUpCornerIndex]);
-    const rightDownCornerOffset = vector.distanceVec2(grid[rightDownCornerIndex]);
-
-
-    const wx = x - xFloor;
-    const wy = y - yFloor;
-
-    const leftUpCornerDot = vector.dot(leftUpCornerOffset);
-    const leftDownCornerDot = vector.dot(leftDownCornerOffset);
-
-    const rightUpCornerDot = vector.dot(rightUpCornerOffset);
-    const rightDownCornerDot = vector.dot(rightDownCornerOffset);
-
-    const i1 = interpolate(leftUpCornerDot, rightUpCornerDot, wx);
-    const i2 = interpolate(leftDownCornerDot, rightDownCornerDot, wx);
-
-    return interpolate(i1, i2, wy);
-
-
-  }
-
+export const interpolateSmoothstep: PerlinSettings['interpolate'] = (a0, a1, w) => {
+  return (a1 - a0) * (3.0 - w * 2.0) * w * w + a0;
 }
 
-function getIndex(x: number, y: number, width: number, height: number) {
-
-  let cx = x
-  let cy = y
-  // wrap coordinates
-  if (cx >= width) cx = 0
-  if (cx < 0) cx = width - 1
-  if (cy >= height) cy = 0
-  if (cy < 0) cy = height - 1
-
-  return cx + width * cy
-}
-
-function interpolate(a0: number, a1: number, w: number) {
-  /* // You may want clamping by inserting:
-   * if (0.0 > w) return a0;
-   * if (1.0 < w) return a1;
-   */
-  // return (a1 - a0) * w + a0;
-  /* // Use this cubic interpolation [[Smoothstep]] instead, for a smooth appearance:
-   * return (a1 - a0) * (3.0 - w * 2.0) * w * w + a0;
-   *
-   * // Use [[Smootherstep]] for an even smoother result with a second derivative equal to zero on boundaries:
-   *  return (a1 - a0) * ((w * (w * 6.0 - 15.0) + 10.0) * w * w * w) + a0;
-   */
+export const interpolateSmootherstep: PerlinSettings['interpolate'] = (a0, a1, w) => {
   return (a1 - a0) * ((w * (w * 6.0 - 15.0) + 10.0) * w * w * w) + a0;
 }
-function mulberry32(a: number) {
-  var t = a += 0x6D2B79F5;
-  t = Math.imul(t ^ t >>> 15, t | 1);
-  t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-  return ((t ^ t >>> 14) >>> 0) / 4294967296;
+
+/** from https://stackoverflow.com/a/47593316 */
+function cyrb128(str: string) {
+  let h1 = 1779033703, h2 = 3144134277,
+    h3 = 1013904242, h4 = 2773480762;
+  for (let i = 0, k; i < str.length; i++) {
+    k = str.charCodeAt(i);
+    h1 = h2 ^ Math.imul(h1 ^ k, 597399067);
+    h2 = h3 ^ Math.imul(h2 ^ k, 2869860233);
+    h3 = h4 ^ Math.imul(h3 ^ k, 951274213);
+    h4 = h1 ^ Math.imul(h4 ^ k, 2716044179);
+  }
+  h1 = Math.imul(h3 ^ (h1 >>> 18), 597399067);
+  h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860233);
+  h3 = Math.imul(h1 ^ (h3 >>> 17), 951274213);
+  h4 = Math.imul(h2 ^ (h4 >>> 19), 2716044179);
+  return [(h1 ^ h2 ^ h3 ^ h4) >>> 0, (h2 ^ h1) >>> 0, (h3 ^ h1) >>> 0, (h4 ^ h1) >>> 0] as const;
 }
+
+/** from https://stackoverflow.com/a/47593316 */
+function sfc32(a: number, b: number, c: number, d: number) {
+  a >>>= 0; b >>>= 0; c >>>= 0; d >>>= 0;
+  let t = (a + b) | 0;
+  a = b ^ b >>> 9;
+  b = c + (c << 3) | 0;
+  c = (c << 21 | c >>> 11);
+  d = d + 1 | 0;
+  t = t + d | 0;
+  c = c + t | 0;
+  return (t >>> 0) / 4294967296;
+}
+
+export default Perlin
