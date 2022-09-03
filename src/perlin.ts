@@ -1,12 +1,18 @@
+import { InterpolationFunction, smootherstep } from './interpolation'
+import { perlin2DFast as perlin2DFunc } from './perlinFast'
+import { cyrb128, sfc32 } from './random'
+
 export interface PerlinSettings {
   frequency: number,
   frequencyMultiplier: number,
   amplitudeMultiplier: number,
   octaves: number,
-  interpolate: (a0: number, a1: number, w: number) => number
+  seed: number
+  interpolate: InterpolationFunction
   /** should return number between 0 and 1 */
-  randomNumber: (x: number, y: number) => number
+  randomNumber: (x: number, y: number, seed: number) => number
 }
+
 
 /** Adapted from https://en.wikipedia.org/wiki/Perlin_noise */
 export class Perlin {
@@ -15,10 +21,11 @@ export class Perlin {
     octaves: 4,
     frequencyMultiplier: 2,
     amplitudeMultiplier: 0.5,
-    interpolate: interpolateSmootherstep,
-    randomNumber: (x, y) => sfc32(...cyrb128(`${x}-${y}`)),
+    seed: 0,
+    interpolate: smootherstep,
+    randomNumber: defaultRandomNumber(),
   }
-  constructor(settings?: Partial<PerlinSettings>) {
+  constructor(settings?: Partial<PerlinSettings>, private a = false) {
     settings && this.setSettings(settings)
   }
 
@@ -27,7 +34,7 @@ export class Perlin {
   }
 
   /** return range -1 to 1 */
-  get(x: number, y: number) {
+  get(x: number, y: number, seedOffset?: number) {
     let res = 0
 
     let frequency = this.settings.frequency
@@ -35,7 +42,14 @@ export class Perlin {
     let divider = 0
     for (let o = 0; o < this.settings.octaves; o++) {
 
-      res += this.perlin(x * frequency, y * frequency) * amplitude
+      if (this.a) {
+        res += this.perlin(x * frequency, y * frequency, seedOffset) * amplitude
+
+      } else {
+        res += perlin2DFunc(x * frequency, y * frequency) * amplitude
+        // res += Noise2D(x * frequency, y * frequency) * amplitude
+
+      }
 
       divider += amplitude
       frequency *= this.settings.frequencyMultiplier
@@ -44,80 +58,93 @@ export class Perlin {
 
     return res / divider
   }
+  /** return range 0 to 255 */
+  getRgb(x: number, y: number, seedOffset?: number) {
+    const v = Math.round(((this.get(x, y, seedOffset) + 0.5)) * 255)
+    return v
+    // return v < 0 ? 0 : v > 255 ? 255 : v
+    // return (this.get(x, y, seedOffset))
+  }
+
+  createImageData(width = 300, height = 300) {
+    let max = -Infinity
+    let min = Infinity
+    const data = []
+    for (let x = 0; x < width; x++) {
+      for (let y = 0; y < height; y++) {
+        const value = this.getRgb(x, y)
+        if (value < min) min = value
+        if (value > max) max = value
+        data.push(value, value, value, 255)
+      }
+    }
+    console.log({ max, min, a: this.a ? 'OLD ' : 'NEW' })
+    return new ImageData(new Uint8ClampedArray(data), width, height)
+  }
+
+  createImageDataColor(width = 300, height = 300) {
+
+    const data = []
+    for (let x = 0; x < width; x++) {
+      for (let y = 0; y < height; y++) {
+        data.push(this.getRgb(x, y), this.getRgb(x, y, 1), this.getRgb(x, y, 2), 255)
+      }
+    }
+
+    return new ImageData(new Uint8ClampedArray(data), width, height)
+  }
 
   /** return range -1 to 1 */
-  private perlin(x: number, y: number) {
+  private perlin(x: number, y: number, seedOffset = 0) {
     const x0 = Math.floor(x);
     const x1 = x0 + 1;
     const y0 = Math.floor(y);
     const y1 = y0 + 1;
 
-    // TODO add order polynomial/s-curve ??
-    // Determine interpolation weights
-    // Could also use higher order polynomial/s-curve here
-    const sx = x - x0;
-    const sy = y - y0;
+    const sx = x - x0
+    const sy = y - y0
 
-    let n0, n1;
+    const seed = this.settings.seed + seedOffset
 
-    n0 = this.dotGridGradient(x0, y0, x, y);
-    n1 = this.dotGridGradient(x1, y0, x, y);
-    const ix0 = this.settings.interpolate(n0, n1, sx);
+    const ix0 = this.settings.interpolate(
+      this.dotGridGradient(x0, y0, x, y, seed),
+      this.dotGridGradient(x1, y0, x, y, seed),
+      sx
+    );
 
-    n0 = this.dotGridGradient(x0, y1, x, y);
-    n1 = this.dotGridGradient(x1, y1, x, y);
-    const ix1 = this.settings.interpolate(n0, n1, sx);
+    const ix1 = this.settings.interpolate(
+      this.dotGridGradient(x0, y1, x, y, seed),
+      this.dotGridGradient(x1, y1, x, y, seed),
+      sx
+    );
 
     return this.settings.interpolate(ix0, ix1, sy);
-
   }
-  dotGridGradient(ix: number, iy: number, x: number, y: number) {
-    const random = this.settings.randomNumber(ix, iy) * Math.PI * 2;
-    return (x - ix) * Math.cos(random) + (y - iy) * Math.sin(random);
+
+  private dotGridGradient(ix: number, iy: number, x: number, y: number, seed: number) {
+    const random = this.settings.randomNumber(ix, iy, seed) * Math.PI * 2;
+    return (x - ix) * Math.cos(random) + (y - iy) * Math.sin(random)
   }
 }
 
-export const interpolateLinear: PerlinSettings['interpolate'] = (a0, a1, w) => {
-  return (a1 - a0) * w + a0;
-}
+export const defaultRandomNumber = (() => {
+  const memory = new Map()
 
-export const interpolateSmoothstep: PerlinSettings['interpolate'] = (a0, a1, w) => {
-  return (a1 - a0) * (3.0 - w * 2.0) * w * w + a0;
-}
+  return (x: number, y: number, seed: number) => {
 
-export const interpolateSmootherstep: PerlinSettings['interpolate'] = (a0, a1, w) => {
-  return (a1 - a0) * ((w * (w * 6.0 - 15.0) + 10.0) * w * w * w) + a0;
-}
+    const key = `${x}-${y}:${seed}`;
+    const memorizedRandom = memory.get(key)
+    if (memorizedRandom) return memorizedRandom
 
-/** from https://stackoverflow.com/a/47593316 */
-function cyrb128(str: string) {
-  let h1 = 1779033703, h2 = 3144134277,
-    h3 = 1013904242, h4 = 2773480762;
-  for (let i = 0, k; i < str.length; i++) {
-    k = str.charCodeAt(i);
-    h1 = h2 ^ Math.imul(h1 ^ k, 597399067);
-    h2 = h3 ^ Math.imul(h2 ^ k, 2869860233);
-    h3 = h4 ^ Math.imul(h3 ^ k, 951274213);
-    h4 = h1 ^ Math.imul(h4 ^ k, 2716044179);
+    const random = (Math.round(sfc32(...cyrb128(key)) * 4) / 4)
+    memory.set(key, random)
+    return random
   }
-  h1 = Math.imul(h3 ^ (h1 >>> 18), 597399067);
-  h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860233);
-  h3 = Math.imul(h1 ^ (h3 >>> 17), 951274213);
-  h4 = Math.imul(h2 ^ (h4 >>> 19), 2716044179);
-  return [(h1 ^ h2 ^ h3 ^ h4) >>> 0, (h2 ^ h1) >>> 0, (h3 ^ h1) >>> 0, (h4 ^ h1) >>> 0] as const;
-}
+})
 
-/** from https://stackoverflow.com/a/47593316 */
-function sfc32(a: number, b: number, c: number, d: number) {
-  a >>>= 0; b >>>= 0; c >>>= 0; d >>>= 0;
-  let t = (a + b) | 0;
-  a = b ^ b >>> 9;
-  b = c + (c << 3) | 0;
-  c = (c << 21 | c >>> 11);
-  d = d + 1 | 0;
-  t = t + d | 0;
-  c = c + t | 0;
-  return (t >>> 0) / 4294967296;
-}
+
+
+
+
 
 export default Perlin
