@@ -1,5 +1,5 @@
-import { Perlin } from './perlin';
-import './style.css';
+import { bezier } from './bezier';
+import Perlin from './perlin';
 
 const canvas = document.createElement('canvas')
 
@@ -10,53 +10,19 @@ document.body.appendChild(canvas)
 
 const ctx = canvas.getContext('2d')!
 
-const s = 500
-const width = s
-const height = s
+const t0 = performance.now()
 
-// const a = perlin(width, height)
+ctx.putImageData(new Perlin({ octaves: 1 }).createImageDataColor(300, 300), 0, 0)
+// ctx.putImageData(new Perlin({ octaves: 2, randomNumber: defaultRandomNumber2 }).createImageData(300, 300), 305, 0)
+// ctx.putImageData(new Perlin({ octaves: 3, randomNumber: defaultRandomNumber2 }).createImageData(300, 300), 0, 305)
+ctx.putImageData(new Perlin({ octaves: 4, rgbConversion: (v) => Math.round(((bezier(v, 0, 0.4, 1, 1) + 1) * 0.5) * 255) }).createImageDataColor(300, 300), 305, 305)
+const t0Res = performance.now() - t0
+const t1 = performance.now()
+ctx.putImageData(new Perlin({ octaves: 1 }).createImageData(300, 300), 610 + 0, 0)
+// ctx.putImageData(new Perlin({ octaves: 2 }).createImageData(300, 300), 610 + 305, 0)
+// ctx.putImageData(new Perlin({ octaves: 3 }).createImageData(300, 300), 610 + 0, 305)
+ctx.putImageData(new Perlin({ octaves: 4 }).createImageData(300, 300), 610 + 305, 305)
 
+const t1Res = performance.now() - t1
 
-
-// const awd = PerlinNoise2D(200, 200, 1, 2)
-
-// console.log(PerlinNoise2D(2, 2, 2, 2))
-// const noiseGen = (x: number, y: number) => 2
-// console.log(noiseGen(0, 0))
-// console.log(noiseGen(3, 48))
-// console.log(noiseGen(4, 48))
-
-
-const pg = new Perlin({
-
-})
-
-for (let x = 0; x < width; x++) {
-  for (let y = 0; y < height; y++) {
-
-    // let frequency = 0.04
-    // const octaves = 5
-    // let res = 0
-    // let amplitude = 1
-    // let divider = 0
-    // for (let o = 0; o < octaves; o++) {
-    //   divider += amplitude
-    //   res += perlin(x * frequency, y * frequency) * amplitude
-    //   frequency *= 2
-    //   amplitude *= 0.5
-    // }
-
-    ctx.beginPath()
-    ctx.moveTo(x, y)
-    ctx.lineTo(x + 1, y + 1)
-    const v = Math.round(((pg.get(x, y)) + 1) * 128)
-    // const v = Math.round((res / divider) * 255)
-    ctx.strokeStyle = `rgb(${v},${v},${v})`
-    ctx.stroke()
-
-
-
-  }
-}
-// console.log('end')
-
+console.log({ t0Res, t1Res })
